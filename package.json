@@ -1,0 +1,30 @@
+{
+  "name": "memecoin-radar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pipeline temps réel (WebSocket → filtrage → enrichissement → scoring → alertes) et banc d'essai statistique avec contrôle par placebo. Cas d'étude : nouveaux tokens Pump.fun.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test --test-reporter=spec \"tests/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test",
+    "backtest": "tsx scripts/backtest.ts",
+    "demo": "tsx scripts/backtest.ts --input data/sample/outcomes.jsonl --trades data/sample/paper-trades.jsonl"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.11",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0"
+  }
+}
