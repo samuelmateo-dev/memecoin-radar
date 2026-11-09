@@ -18,7 +18,7 @@ The bot listens to the live feed, filters and scores each token, sends alerts, t
 | **Integration of fragile external APIs**: rate-limit-respecting queue, parallel IPFS gateways with retry, graceful degradation when a service goes down | `src/enrichment/` |
 | **Testable architecture**: every dependency is injected, the same code runs in production and in tests | `src/radar.ts` |
 | **Statistical rigor**: placebo control (permutation test), bootstrap confidence intervals, multiple-testing correction, fixed seed | `src/analysis/` |
-| **Quality**: strict TypeScript, 118 tests, check that the tests catch regressions | `tests/` |
+| **Quality**: strict TypeScript, 151 tests, check that the tests catch regressions | `tests/` |
 
 ## One-command start
 
@@ -91,8 +91,9 @@ The two-stage filter has a precise reason: the free Helius plan is rate-limited,
 | `src/tracking/` | Price tracking after scoring, name-wave detection |
 | `src/execution/` | Position management and **paper** broker |
 | `src/notify/` | Telegram alerts (falls back to the console without configuration) |
-| `src/analysis/` | Statistics, exit rules, hypothesis battery, report |
+| `src/analysis/` | Statistics, exit rules, hypothesis battery, hypothesis-file reader, report |
 | `scripts/backtest.ts` | Command line of the test bench |
+| `examples/` | Example hypothesis file for `--hypotheses` |
 | `data/sample/` | Real dataset, names anonymized: 1,185 tracked candidates, 464 paper orders |
 
 ## Running the bot live
@@ -122,19 +123,54 @@ npm run backtest -- --seed 7 --iterations 20000 --sol-usd 150
 
 The p-values are then corrected with the Bonferroni method for the number of hypotheses tested (a harsh method, on purpose: these ideas are correlated with one another), and a subgroup of fewer than 20 candidates is never tested. A hypothesis is "proven" only if both conditions hold.
 
+### Choosing what to test
+
+By default the test bench runs everything: the three report sections and the 14 built-in hypotheses. You can narrow it down, or bring your own ideas:
+
+```bash
+npm run backtest -- --list                       # built-in hypotheses, exit rules, file format
+npm run backtest -- --sections battery           # part of the report: score, exits, battery, paper
+npm run backtest -- --only score90,entry100      # a subset of the built-in hypotheses
+npm run backtest -- --hypotheses my-ideas.json   # your own hypotheses instead of the built-in ones
+```
+
+A hypothesis file is a JSON array (full example in [`examples/hypotheses.example.json`](examples/hypotheses.example.json)):
+
+```json
+[
+  {
+    "id": "my-filter",
+    "label": "Score ≥ 80, top holders ≤ 70%, X link, target ×1.5",
+    "filter": { "minScore": 80, "maxTopHolderPercent": 70, "twitterLink": true },
+    "exit": { "type": "takeProfit", "multiple": 1.5 }
+  }
+]
+```
+
+- **Filters** (all optional, combined with AND): `minScore`, `maxScore`, `minEntrySol`, `maxEntrySol`, `minEntryUsd`, `maxEntryUsd`, `minTopHolderPercent`, `maxTopHolderPercent`, `twitterLink`, `authoritiesRevoked`, `minUniqueBuyers`, `maxDevBuyPercent`, `waveRank`. A candidate missing the signal a filter asks about is excluded, never guessed. Score filters exclude the "name wave" rows, which have no real score.
+- **Exits**: `takeProfit` (`multiple`), `trailingStop` (`dropPercent`), `fixedTime` (`minutes`), `bracket` (`target`, `stop`), `crossing` (`fromUsd`, `toUsd`, without a filter). Without a filter, the hypothesis tests the exit rule on every candidate, and the placebo does not apply.
+
+What keeps the verdict honest when the choice is free:
+
+- **Typos are errors.** An unknown key stops the run with a message naming it: a silently ignored filter would test the whole population without anyone noticing.
+- **The correction counts the tests actually run.** If you already looked at other ideas on the same data, say so with `--tests-counted <n>`: the Bonferroni correction then uses `n`. The report states the number it used.
+- **"Proven" only means something for ideas fixed before looking at the data.** The report says so under your own hypotheses; a result that is "almost significant" still needs new tokens.
+- **Same hypothesis, same numbers.** With `--only` or `--hypotheses`, each hypothesis draws from its own random stream derived from the seed and its `id`: the figures do not depend on the rest of the list. They therefore differ slightly from the same hypothesis in the full default run, where the draws are shared in sequence (the default output is unchanged).
+
 ## Tests
 
 ```bash
-npm test          # 118 tests
+npm test          # 151 tests
 npm run check     # type check + tests
 ```
 
-The full pipeline is tested end to end with a fake feed, fake enrichment services and a manual scheduler (time only advances when the test decides). The exit rules, the scoring scale, the placebo and the statistics are tested on hand-computed cases. The tests were also checked by mutation: deliberately breaking a key behavior (scoring threshold, position limit, name-wave fix) makes at least one test fail.
+The full pipeline is tested end to end with a fake feed, fake enrichment services and a manual scheduler (time only advances when the test decides). The exit rules, the scoring scale, the placebo and the statistics are tested on hand-computed cases. The tests were also checked by mutation: deliberately breaking a key behavior (scoring threshold, position limit, name-wave fix) makes at least one test fail. The same check was run on the hypothesis-file code and its command-line options: 23 deliberate breakages, each caught by at least one test, every filter tested one by one, and five hypotheses checked by exact equivalence with their built-in counterpart.
 
 ## Acknowledged limitations
 
 - **Execution assumed perfect.** The simulations buy and sell at the last known price, with no latency or slippage. A real trade would do worse. Fees are estimated (2% round trip + priority fees), never measured on real orders.
 - **The hypotheses are tested on the same 919 candidates**, and several dozen combinations were explored before the final battery was written: the real number of trials is higher than the 14 counted. A real validation would need new tokens, with a hypothesis frozen in advance.
+- **Your own hypotheses are tested on the same candidates.** The tool cannot know whether you chose them after seeing the data; `--tests-counted` and the warning in the report only work if you are honest about it.
 - **Pump.fun only**, and *bonding curve* price only: after migration to another market, the true peak may be higher.
 - **Short tracking window** (5 to 15 minutes): slower moves are not seen.
 - **Tracking in progress lives in memory.** If the process stops before a window ends, that result is lost.

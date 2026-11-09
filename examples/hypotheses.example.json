@@ -1,0 +1,16 @@
+[
+  {
+    "id": "mon-filtre-1",
+    "label": "Score ≥ 80, holders ≤ 70 %, lien X, objectif ×1,5",
+    "filter": { "minScore": 80, "maxTopHolderPercent": 70, "twitterLink": true },
+    "exit": { "type": "takeProfit", "multiple": 1.5 }
+  },
+  {
+    "filter": { "minEntryUsd": 15000, "authoritiesRevoked": true },
+    "exit": { "type": "trailingStop", "dropPercent": 15 }
+  },
+  {
+    "id": "vente-2-minutes",
+    "exit": { "type": "fixedTime", "minutes": 2 }
+  }
+]

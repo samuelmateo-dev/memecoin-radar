@@ -272,13 +272,38 @@ export interface BatteryOptions {
   /** Taille minimale d'un sous-groupe pour être testé (défaut 20) : en dessous, un seul cas extrême décide du résultat. */
   minSampleSize?: number;
   hypotheses?: Hypothesis[];
+  /**
+   * Nombre de tests pris en compte par la correction de Bonferroni. Défaut : le nombre d'hypothèses
+   * lancées. À augmenter quand d'autres idées ont déjà été regardées sur ces données (jamais en dessous
+   * du nombre d'hypothèses lancées).
+   */
+  correctionCount?: number;
+  /**
+   * Faux (défaut) : un seul flux aléatoire partagé, comme la batterie d'origine (les chiffres d'une
+   * hypothèse dépendent donc de celles qui la précèdent). Vrai : chaque hypothèse a son propre flux,
+   * dérivé de la graine et de son identifiant : mêmes chiffres quel que soit le reste de la liste.
+   */
+  independentStreams?: boolean;
 }
 
 export interface BatteryReport {
   populationSize: number;
   hypothesesTested: number;
-  options: Required<Omit<BatteryOptions, "hypotheses">>;
+  /** Nombre de tests sur lequel la correction de Bonferroni est calculée (≥ hypothesesTested). */
+  correctionCount: number;
+  independentStreams: boolean;
+  options: Required<Omit<BatteryOptions, "hypotheses" | "correctionCount" | "independentStreams">>;
   results: HypothesisResult[];
+}
+
+/** Graine propre à une hypothèse : FNV-1a de son identifiant, combinée à la graine globale. */
+export function streamSeed(seed: number, id: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (Math.floor(seed) ^ h) >>> 0;
 }
 
 /**
@@ -294,11 +319,19 @@ export function runBattery(rows: readonly OutcomeRow[], options: BatteryOptions 
   const alpha = options.alpha ?? 0.05;
   const minSampleSize = options.minSampleSize ?? 20;
   const hypotheses = options.hypotheses ?? HYPOTHESES;
-  const rng = mulberry32(seed);
+  const independentStreams = options.independentStreams === true;
+  const sharedRng = mulberry32(seed);
   const ctx: HypothesisContext = { solUsd };
-  const k = hypotheses.length;
+  const k = options.correctionCount ?? hypotheses.length;
+  if (hypotheses.length === 0) throw new RangeError("au moins une hypothèse est nécessaire");
+  if (!Number.isInteger(k) || k < hypotheses.length) {
+    throw new RangeError(
+      `correctionCount (${k}) doit être un entier au moins égal au nombre d'hypothèses lancées (${hypotheses.length})`
+    );
+  }
 
   const results: HypothesisResult[] = hypotheses.map((h) => {
+    const rng = independentStreams ? mulberry32(streamSeed(seed, h.id)) : sharedRng;
     const exit = h.exit(ctx);
     const subsetRows = h.filter ? rows.filter((r) => h.filter!(r, ctx)) : [...rows];
     const gross = applyRule(subsetRows, exit);
@@ -359,7 +392,9 @@ export function runBattery(rows: readonly OutcomeRow[], options: BatteryOptions 
 
   return {
     populationSize: rows.length,
-    hypothesesTested: k,
+    hypothesesTested: hypotheses.length,
+    correctionCount: k,
+    independentStreams,
     options: { seed, iterations, solUsd, costs, alpha, minSampleSize },
     results,
   };

@@ -16,7 +16,7 @@ Le bot écoute le flux en direct, filtre et note chaque token, envoie des alerte
 | **Intégration d'API externes fragiles** : file d'attente respectant un quota, passerelles IPFS en parallèle avec relance, dégradation gracieuse quand un service tombe | `src/enrichment/` |
 | **Architecture testable** : toutes les dépendances sont injectées, le même code tourne en production et dans les tests | `src/radar.ts` |
 | **Rigueur statistique** : contrôle par placebo (test de permutation), intervalles de confiance bootstrap, correction pour tests multiples, graine fixe | `src/analysis/` |
-| **Qualité** : TypeScript strict, 118 tests, vérification que les tests détectent les régressions | `tests/` |
+| **Qualité** : TypeScript strict, 151 tests, vérification que les tests détectent les régressions | `tests/` |
 
 ## Démarrage en une commande
 
@@ -89,8 +89,9 @@ Le filtre en deux étages a une raison précise : le plan gratuit Helius est lim
 | `src/tracking/` | Suivi du prix après notation, détection de vagues de noms |
 | `src/execution/` | Gestion des positions et courtier **papier** |
 | `src/notify/` | Alertes Telegram (repli sur la console sans configuration) |
-| `src/analysis/` | Statistiques, règles de sortie, batterie d'hypothèses, rapport |
+| `src/analysis/` | Statistiques, règles de sortie, batterie d'hypothèses, lecture du fichier d'hypothèses, rapport |
 | `scripts/backtest.ts` | Ligne de commande du banc d'essai |
+| `examples/` | Exemple de fichier d'hypothèses pour `--hypotheses` |
 | `data/sample/` | Jeu de données réel, noms anonymisés : 1 185 candidats suivis, 464 ordres papier |
 
 ## Lancer le bot en direct
@@ -120,19 +121,54 @@ npm run backtest -- --seed 7 --iterations 20000 --sol-usd 150
 
 Les p-values sont ensuite corrigées par la méthode de Bonferroni pour le nombre d'hypothèses testées (méthode sévère, volontairement : ces idées sont corrélées entre elles), et un sous-groupe de moins de 20 candidats n'est jamais testé. Une hypothèse n'est « démontrée » que si les deux conditions tiennent.
 
+### Choisir ce qui est testé
+
+Par défaut, le banc d'essai lance tout : les trois sections du rapport et les 14 hypothèses fournies. On peut restreindre, ou apporter ses propres idées :
+
+```bash
+npm run backtest -- --list                       # hypothèses fournies, règles de sortie, format du fichier
+npm run backtest -- --sections battery           # une partie du rapport : score, exits, battery, paper
+npm run backtest -- --only score90,entry100      # un sous-ensemble des hypothèses fournies
+npm run backtest -- --hypotheses mes-idees.json  # tes hypothèses à la place de celles fournies
+```
+
+Un fichier d'hypothèses est un tableau JSON (exemple complet dans [`examples/hypotheses.example.json`](examples/hypotheses.example.json)) :
+
+```json
+[
+  {
+    "id": "mon-filtre",
+    "label": "Score ≥ 80, holders ≤ 70 %, lien X, objectif ×1,5",
+    "filter": { "minScore": 80, "maxTopHolderPercent": 70, "twitterLink": true },
+    "exit": { "type": "takeProfit", "multiple": 1.5 }
+  }
+]
+```
+
+- **Filtres** (tous facultatifs, cumulés par ET) : `minScore`, `maxScore`, `minEntrySol`, `maxEntrySol`, `minEntryUsd`, `maxEntryUsd`, `minTopHolderPercent`, `maxTopHolderPercent`, `twitterLink`, `authoritiesRevoked`, `minUniqueBuyers`, `maxDevBuyPercent`, `waveRank`. Un candidat sans le signal que le filtre demande est exclu, jamais deviné. Les filtres de score excluent les lignes « vague de noms », qui n'ont pas de vrai score.
+- **Sorties** : `takeProfit` (`multiple`), `trailingStop` (`dropPercent`), `fixedTime` (`minutes`), `bracket` (`target`, `stop`), `crossing` (`fromUsd`, `toUsd`, sans filtre). Sans filtre, l'hypothèse teste la règle de sortie sur tous les candidats, et le placebo ne s'applique pas.
+
+Ce qui garde le verdict honnête quand le choix est libre :
+
+- **Une faute de frappe est une erreur.** Une clé inconnue arrête l'exécution avec un message qui la nomme : un filtre ignoré en silence testerait toute la population sans que personne ne le voie.
+- **La correction compte les tests réellement lancés.** Si tu as déjà regardé d'autres idées sur ces données, dis-le avec `--tests-counted <n>` : la correction de Bonferroni utilise alors `n`. Le rapport affiche le nombre utilisé.
+- **« Démontré » n'a de sens que pour des idées fixées avant de regarder les données.** Le rapport le rappelle sous tes hypothèses ; un résultat « presque significatif » se confirme sur de nouveaux tokens.
+- **Même hypothèse, mêmes chiffres.** Avec `--only` ou `--hypotheses`, chaque hypothèse tire dans son propre flux aléatoire, dérivé de la graine et de son `id` : les chiffres ne dépendent pas du reste de la liste. Ils diffèrent donc légèrement de la même hypothèse dans l'exécution complète par défaut, où les tirages sont partagés en séquence (la sortie par défaut est inchangée).
+
 ## Tests
 
 ```bash
-npm test          # 118 tests
+npm test          # 151 tests
 npm run check     # contrôle de types + tests
 ```
 
-Le pipeline complet est testé de bout en bout avec un faux flux, de faux services d'enrichissement et un planificateur manuel (le temps n'avance que quand le test le décide). Les règles de sortie, le barème, le placebo et les statistiques sont testés sur des cas calculés à la main. Les tests ont aussi été vérifiés par mutation : casser volontairement un comportement clé (seuil du barème, limite de positions, correctif des vagues de noms) fait échouer au moins un test.
+Le pipeline complet est testé de bout en bout avec un faux flux, de faux services d'enrichissement et un planificateur manuel (le temps n'avance que quand le test le décide). Les règles de sortie, le barème, le placebo et les statistiques sont testés sur des cas calculés à la main. Les tests ont aussi été vérifiés par mutation : casser volontairement un comportement clé (seuil du barème, limite de positions, correctif des vagues de noms) fait échouer au moins un test. Le même contrôle a été fait sur le code du fichier d'hypothèses et ses options en ligne de commande : 23 casses volontaires, chacune détectée par au moins un test, chaque filtre testé un par un, et cinq hypothèses vérifiées par équivalence exacte avec leur équivalent fourni.
 
 ## Limites assumées
 
 - **Exécution supposée parfaite.** Les simulations achètent et vendent au dernier prix connu, sans latence ni glissement. Un vrai trade ferait moins bien. Les frais sont estimés (2 % aller-retour + frais de priorité), jamais mesurés sur de vrais ordres.
 - **Les hypothèses sont testées sur les mêmes 919 candidats**, et plusieurs dizaines de combinaisons ont été explorées avant d'écrire la batterie finale : le nombre réel d'essais est supérieur aux 14 comptés. Une vraie validation exigerait des tokens nouveaux, avec une hypothèse figée à l'avance.
+- **Tes propres hypothèses sont testées sur les mêmes candidats.** L'outil ne peut pas savoir si tu les as choisies après avoir vu les données ; `--tests-counted` et l'avertissement du rapport ne valent que si tu es honnête là-dessus.
 - **Pump.fun seulement**, et prix de la *bonding curve* uniquement : après migration vers un autre marché, le vrai pic peut être plus haut.
 - **Fenêtre de suivi courte** (5 à 15 minutes) : les mouvements plus lents ne sont pas vus.
 - **Le suivi en cours vit en mémoire.** Si le processus s'arrête avant la fin d'une fenêtre, ce résultat est perdu.

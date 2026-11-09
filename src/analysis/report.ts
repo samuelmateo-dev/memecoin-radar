@@ -18,6 +18,7 @@ const pct = (v: number) => (Number.isFinite(v) ? `${v.toFixed(0)} %` : "—");
 const pval = (v: number | null) => (v === null || !Number.isFinite(v) ? "—" : v < 0.001 ? "<0,001" : v.toFixed(3).replace(".", ","));
 const sol = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2).replace(".", ",")} SOL`;
 
+/** Titre de section souligné (le numéro, s'il y en a un, fait partie du titre passé). */
 export function section(title: string): string {
   return `\n${title}\n${"═".repeat(title.length)}`;
 }
